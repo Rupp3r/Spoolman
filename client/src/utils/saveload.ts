@@ -11,6 +11,8 @@ export interface TableState {
   filters: CrudFilter[];
   pagination: Pagination;
   showColumns?: string[];
+  columnOrder?: string[];
+  columnWidths?: Record<string, number>;
 }
 
 export function useInitialTableState(tableId: string): TableState {
@@ -31,12 +33,16 @@ export function useInitialTableState(tableId: string): TableState {
       ? localStorage.getItem(`${tableId}-pagination`)
       : null;
     const savedShowColumns = isLocalStorageAvailable ? localStorage.getItem(`${tableId}-showColumns`) : null;
+    const savedColumnOrder = isLocalStorageAvailable ? localStorage.getItem(`${tableId}-columnOrder`) : null;
+    const savedColumnWidths = isLocalStorageAvailable ? localStorage.getItem(`${tableId}-columnWidths`) : null;
 
     const sorters = savedSorters ? JSON.parse(savedSorters) : [{ field: "id", order: "asc" }];
     const filters = savedFilters ? JSON.parse(savedFilters) : [];
     const pagination = savedPagination ? JSON.parse(savedPagination) : { page: 1, pageSize: 20 };
     const showColumns = savedShowColumns ? JSON.parse(savedShowColumns) : undefined;
-    return { sorters, filters, pagination, showColumns };
+    const columnOrder = savedColumnOrder ? JSON.parse(savedColumnOrder) : undefined;
+    const columnWidths = savedColumnWidths ? JSON.parse(savedColumnWidths) : undefined;
+    return { sorters, filters, pagination, showColumns, columnOrder, columnWidths };
   });
   return initialState;
 }
@@ -88,6 +94,26 @@ export function useStoreInitialState(tableId: string, state: TableState) {
       }
     }
   }, [tableId, state.showColumns]);
+
+  useEffect(() => {
+    if (isLocalStorageAvailable) {
+      if (state.columnOrder === undefined) {
+        localStorage.removeItem(`${tableId}-columnOrder`);
+      } else {
+        localStorage.setItem(`${tableId}-columnOrder`, JSON.stringify(state.columnOrder));
+      }
+    }
+  }, [tableId, state.columnOrder]);
+
+  useEffect(() => {
+    if (isLocalStorageAvailable) {
+      if (state.columnWidths === undefined) {
+        localStorage.removeItem(`${tableId}-columnWidths`);
+      } else {
+        localStorage.setItem(`${tableId}-columnWidths`, JSON.stringify(state.columnWidths));
+      }
+    }
+  }, [tableId, state.columnWidths]);
 }
 
 export function useSavedState<T>(id: string, defaultValue: T) {

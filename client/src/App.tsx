@@ -28,6 +28,7 @@ import liveProvider from "./components/liveProvider";
 import SpoolmanNotificationProvider from "./components/notificationProvider";
 import { ColorModeContextProvider } from "./contexts/color-mode";
 import { languages } from "./i18n";
+import "./utils/table.css";
 import { getAPIURL, getBasePath } from "./utils/url";
 
 interface ResourcePageProps {
