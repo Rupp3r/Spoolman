@@ -1,0 +1,27 @@
+.spoolman-resizable-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+}
+
+.spoolman-resizer {
+  position: absolute;
+  right: -4px;
+  top: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+}
+
+.spoolman-resizer::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 25%;
+  bottom: 25%;
+  width: 1px;
+  background: #d9d9d9;
+}

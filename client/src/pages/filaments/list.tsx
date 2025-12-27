@@ -1,10 +1,11 @@
 import { EditOutlined, EyeOutlined, FileOutlined, FilterOutlined, PlusSquareOutlined } from "@ant-design/icons";
 import { List, useTable } from "@refinedev/antd";
 import { IResourceComponentsProps, useInvalidate, useNavigation, useTranslate } from "@refinedev/core";
-import { Button, Dropdown, Table } from "antd";
+import { Button, Table } from "antd";
+import type { ColumnType } from "antd/es/table/interface";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
     ActionsColumn,
@@ -16,6 +17,7 @@ import {
     SortedColumn,
     SpoolIconColumn,
 } from "../../components/column";
+import { ColumnEditorModal } from "../../components/columnEditor";
 import { useLiveify } from "../../components/liveify";
 import {
     useSpoolmanArticleNumbers,
@@ -79,7 +81,10 @@ export const FilamentList: React.FC<IResourceComponentsProps> = () => {
   const extraFields = useGetFields(EntityType.filament);
   const currencyFormatter = useCurrencyFormatter();
 
-  const allColumnsWithExtraFields = [...allColumns, ...(extraFields.data?.map((field) => "extra." + field.key) ?? [])];
+  const allColumnsWithExtraFields = useMemo(
+    () => [...allColumns, ...(extraFields.data?.map((field) => "extra." + field.key) ?? [])],
+    [extraFields.data]
+  );
 
   // Load initial state
   const initialState = useInitialTableState(namespace);
@@ -126,6 +131,24 @@ export const FilamentList: React.FC<IResourceComponentsProps> = () => {
 
   // Create state for the columns to show
   const [showColumns, setShowColumns] = useState<string[]>(initialState.showColumns ?? defaultColumns);
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    const savedOrder = initialState.columnOrder ?? allColumnsWithExtraFields;
+    const known = new Set(allColumnsWithExtraFields);
+    const filtered = savedOrder.filter((columnId) => known.has(columnId));
+    const missing = allColumnsWithExtraFields.filter((columnId) => !filtered.includes(columnId));
+    return [...filtered, ...missing];
+  });
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(initialState.columnWidths ?? {});
+  const [editColumnsOpen, setEditColumnsOpen] = useState(false);
+
+  useEffect(() => {
+    setColumnOrder((prev) => {
+      const known = new Set(allColumnsWithExtraFields);
+      const filtered = prev.filter((columnId) => known.has(columnId));
+      const missing = allColumnsWithExtraFields.filter((columnId) => !filtered.includes(columnId));
+      return [...filtered, ...missing];
+    });
+  }, [allColumnsWithExtraFields]);
 
   // Store state in local storage
   const tableState: TableState = {
@@ -133,6 +156,8 @@ export const FilamentList: React.FC<IResourceComponentsProps> = () => {
     filters,
     pagination: { current, pageSize },
     showColumns,
+    columnOrder,
+    columnWidths,
   };
   useStoreInitialState(namespace, tableState);
 
@@ -165,6 +190,213 @@ export const FilamentList: React.FC<IResourceComponentsProps> = () => {
     sorter: true,
   };
 
+  const columnOptions = useMemo(
+    () =>
+      allColumnsWithExtraFields.map((column_id) => {
+        if (column_id.indexOf("extra.") === 0) {
+          const extraField = extraFields.data?.find((field) => "extra." + field.key === column_id);
+          return {
+            id: column_id,
+            label: extraField?.name ?? column_id,
+          };
+        }
+
+        return {
+          id: column_id,
+          label: t(translateColumnI18nKey(column_id)),
+        };
+      }),
+    [allColumnsWithExtraFields, extraFields.data, t]
+  );
+
+  const handleResizeStart = useCallback(
+    (columnId: string) => (event: React.MouseEvent<HTMLSpanElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const headerCell = (event.currentTarget as HTMLElement).closest("th");
+      const startWidth =
+        columnWidths[columnId] ?? (headerCell ? Math.round(headerCell.getBoundingClientRect().width) : 0);
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const nextWidth = Math.max(60, startWidth + moveEvent.clientX - startX);
+        setColumnWidths((prev) => ({
+          ...prev,
+          [columnId]: Math.round(nextWidth),
+        }));
+      };
+
+      const onMouseUp = () => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [columnWidths]
+  );
+
+  const getColumnKey = (column: ColumnType<IFilamentCollapsed>): string | undefined => {
+    if (column.key) {
+      return column.key.toString();
+    }
+    if (Array.isArray(column.dataIndex)) {
+      return column.dataIndex.join(".");
+    }
+    if (typeof column.dataIndex === "string") {
+      return column.dataIndex;
+    }
+    return undefined;
+  };
+
+  const baseColumns = removeUndefined([
+    SortedColumn({
+      ...commonProps,
+      id: "id",
+      i18ncat: "filament",
+      width: 70,
+    }),
+    FilteredQueryColumn({
+      ...commonProps,
+      id: "vendor.name",
+      i18nkey: "filament.fields.vendor_name",
+      filterValueQuery: useSpoolmanVendors(),
+    }),
+    SpoolIconColumn({
+      ...commonProps,
+      id: "name",
+      i18ncat: "filament",
+      color: (record: IFilamentCollapsed) =>
+        record.multi_color_hexes
+          ? {
+              colors: record.multi_color_hexes.split(","),
+              vertical: record.multi_color_direction === "longitudinal",
+            }
+          : record.color_hex,
+      filterValueQuery: useSpoolmanFilamentNames(),
+    }),
+    FilteredQueryColumn({
+      ...commonProps,
+      id: "material",
+      i18ncat: "filament",
+      filterValueQuery: useSpoolmanMaterials(),
+      width: 110,
+    }),
+    SortedColumn({
+      ...commonProps,
+      id: "price",
+      i18ncat: "filament",
+      align: "right",
+      width: 80,
+      render: (_, obj: IFilamentCollapsed) => {
+        if (obj.price === undefined) {
+          return "";
+        }
+        return currencyFormatter.format(obj.price);
+      },
+    }),
+    NumberColumn({
+      ...commonProps,
+      id: "density",
+      i18ncat: "filament",
+      unit: "g/cm³",
+      maxDecimals: 2,
+      width: 100,
+    }),
+    NumberColumn({
+      ...commonProps,
+      id: "diameter",
+      i18ncat: "filament",
+      unit: "mm",
+      maxDecimals: 2,
+      width: 100,
+    }),
+    NumberColumn({
+      ...commonProps,
+      id: "weight",
+      i18ncat: "filament",
+      unit: "g",
+      maxDecimals: 0,
+      width: 100,
+    }),
+    NumberColumn({
+      ...commonProps,
+      id: "spool_weight",
+      i18ncat: "filament",
+      unit: "g",
+      maxDecimals: 0,
+      width: 100,
+    }),
+    FilteredQueryColumn({
+      ...commonProps,
+      id: "article_number",
+      i18ncat: "filament",
+      filterValueQuery: useSpoolmanArticleNumbers(),
+      width: 130,
+    }),
+    NumberColumn({
+      ...commonProps,
+      id: "settings_extruder_temp",
+      i18ncat: "filament",
+      unit: "°C",
+      maxDecimals: 0,
+      width: 100,
+    }),
+    NumberColumn({
+      ...commonProps,
+      id: "settings_bed_temp",
+      i18ncat: "filament",
+      unit: "°C",
+      maxDecimals: 0,
+      width: 100,
+    }),
+    DateColumn({
+      ...commonProps,
+      id: "registered",
+      i18ncat: "filament",
+    }),
+    ...(extraFields.data?.map((field) => {
+      return CustomFieldColumn({
+        ...commonProps,
+        field,
+      });
+    }) ?? []),
+    RichColumn({
+      ...commonProps,
+      id: "comment",
+      i18ncat: "filament",
+      width: 150,
+    }),
+    ActionsColumn(t("table.actions"), actions),
+  ]) as ColumnType<IFilamentCollapsed>[];
+
+  const columnsWithResizers = baseColumns.map((column) => {
+    const columnKey = getColumnKey(column);
+    if (!columnKey || columnKey === "actions") {
+      return column;
+    }
+    return {
+      ...column,
+      title: (
+        <div className="spoolman-resizable-header">
+          <span>{column.title}</span>
+          <span className="spoolman-resizer" onMouseDown={handleResizeStart(columnKey)} />
+        </div>
+      ),
+    };
+  });
+
+  const orderSet = new Set(columnOrder);
+  const orderedColumns = columnOrder
+    .map((columnId) => columnsWithResizers.find((column) => getColumnKey(column) === columnId))
+    .filter(Boolean) as ColumnType<IFilamentCollapsed>[];
+  const remainingColumns = columnsWithResizers.filter((column) => {
+    const columnKey = getColumnKey(column);
+    return !columnKey || !orderSet.has(columnKey);
+  });
+  const tableColumns = [...orderedColumns, ...remainingColumns];
+
   return (
     <List
       headerButtons={({ defaultButtons }) => (
@@ -180,38 +412,25 @@ export const FilamentList: React.FC<IResourceComponentsProps> = () => {
           >
             {t("buttons.clearFilters")}
           </Button>
-          <Dropdown
-            trigger={["click"]}
-            menu={{
-              items: allColumnsWithExtraFields.map((column_id) => {
-                if (column_id.indexOf("extra.") === 0) {
-                  const extraField = extraFields.data?.find((field) => "extra." + field.key === column_id);
-                  return {
-                    key: column_id,
-                    label: extraField?.name ?? column_id,
-                  };
-                }
-
-                return {
-                  key: column_id,
-                  label: t(translateColumnI18nKey(column_id)),
-                };
-              }),
-              selectedKeys: showColumns,
-              selectable: true,
-              multiple: true,
-              onDeselect: (keys) => {
-                setShowColumns(keys.selectedKeys);
-              },
-              onSelect: (keys) => {
-                setShowColumns(keys.selectedKeys);
-              },
+          <Button type="primary" icon={<EditOutlined />} onClick={() => setEditColumnsOpen(true)}>
+            {t("buttons.hideColumns")}
+          </Button>
+          <ColumnEditorModal
+            open={editColumnsOpen}
+            onClose={() => setEditColumnsOpen(false)}
+            columns={columnOptions}
+            columnOrder={columnOrder}
+            showColumns={showColumns}
+            columnWidths={columnWidths}
+            title={t("buttons.hideColumns")}
+            applyLabel={t("buttons.save")}
+            onApply={(nextState) => {
+              setColumnOrder(nextState.columnOrder);
+              setShowColumns(nextState.showColumns);
+              setColumnWidths(nextState.columnWidths);
+              setEditColumnsOpen(false);
             }}
-          >
-            <Button type="primary" icon={<EditOutlined />}>
-              {t("buttons.hideColumns")}
-            </Button>
-          </Dropdown>
+          />
           {defaultButtons}
         </>
       )}
@@ -223,126 +442,7 @@ export const FilamentList: React.FC<IResourceComponentsProps> = () => {
         scroll={{ x: "max-content" }}
         dataSource={dataSource}
         rowKey="id"
-        columns={removeUndefined([
-          SortedColumn({
-            ...commonProps,
-            id: "id",
-            i18ncat: "filament",
-            width: 70,
-          }),
-          FilteredQueryColumn({
-            ...commonProps,
-            id: "vendor.name",
-            i18nkey: "filament.fields.vendor_name",
-            filterValueQuery: useSpoolmanVendors(),
-          }),
-          SpoolIconColumn({
-            ...commonProps,
-            id: "name",
-            i18ncat: "filament",
-            color: (record: IFilamentCollapsed) =>
-              record.multi_color_hexes
-                ? {
-                    colors: record.multi_color_hexes.split(","),
-                    vertical: record.multi_color_direction === "longitudinal",
-                  }
-                : record.color_hex,
-            filterValueQuery: useSpoolmanFilamentNames(),
-          }),
-          FilteredQueryColumn({
-            ...commonProps,
-            id: "material",
-            i18ncat: "filament",
-            filterValueQuery: useSpoolmanMaterials(),
-            width: 110,
-          }),
-          SortedColumn({
-            ...commonProps,
-            id: "price",
-            i18ncat: "filament",
-            align: "right",
-            width: 80,
-            render: (_, obj: IFilamentCollapsed) => {
-              if (obj.price === undefined) {
-                return "";
-              }
-              return currencyFormatter.format(obj.price);
-            },
-          }),
-          NumberColumn({
-            ...commonProps,
-            id: "density",
-            i18ncat: "filament",
-            unit: "g/cm³",
-            maxDecimals: 2,
-            width: 100,
-          }),
-          NumberColumn({
-            ...commonProps,
-            id: "diameter",
-            i18ncat: "filament",
-            unit: "mm",
-            maxDecimals: 2,
-            width: 100,
-          }),
-          NumberColumn({
-            ...commonProps,
-            id: "weight",
-            i18ncat: "filament",
-            unit: "g",
-            maxDecimals: 0,
-            width: 100,
-          }),
-          NumberColumn({
-            ...commonProps,
-            id: "spool_weight",
-            i18ncat: "filament",
-            unit: "g",
-            maxDecimals: 0,
-            width: 100,
-          }),
-          FilteredQueryColumn({
-            ...commonProps,
-            id: "article_number",
-            i18ncat: "filament",
-            filterValueQuery: useSpoolmanArticleNumbers(),
-            width: 130,
-          }),
-          NumberColumn({
-            ...commonProps,
-            id: "settings_extruder_temp",
-            i18ncat: "filament",
-            unit: "°C",
-            maxDecimals: 0,
-            width: 100,
-          }),
-          NumberColumn({
-            ...commonProps,
-            id: "settings_bed_temp",
-            i18ncat: "filament",
-            unit: "°C",
-            maxDecimals: 0,
-            width: 100,
-          }),
-          DateColumn({
-            ...commonProps,
-            id: "registered",
-            i18ncat: "filament",
-          }),
-          ...(extraFields.data?.map((field) => {
-            return CustomFieldColumn({
-              ...commonProps,
-              field,
-            });
-          }) ?? []),
-          RichColumn({
-            ...commonProps,
-            id: "comment",
-            i18ncat: "filament",
-            width: 150,
-          }),
-          ActionsColumn(t("table.actions"), actions),
-        ])}
+        columns={tableColumns}
       />
     </List>
   );

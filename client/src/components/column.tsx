@@ -51,6 +51,7 @@ interface BaseColumnProps<Obj extends Entity> {
   dataSource: Obj[];
   tableState: TableState;
   width?: number;
+  defaultWidth?: number;
   actions?: (record: Obj) => Action[];
   transform?: (value: unknown) => unknown;
   render?: (rawValue: string | undefined, record: Obj) => React.ReactNode;
@@ -86,12 +87,15 @@ function Column<Obj extends Entity>(
     return undefined;
   }
 
+  const widthOverride = props.tableState.columnWidths?.[id];
+
   const columnProps: ColumnType<Obj> = {
+    key: id,
     dataIndex: props.id,
     align: props.align,
     title: props.title ?? t(props.i18nkey ?? `${props.i18ncat}.fields.${props.id}`),
     filterMultiple: props.allowMultipleFilters ?? true,
-    width: props.width ?? undefined,
+    width: widthOverride ?? props.width ?? props.defaultWidth,
     onCell: props.onCell ?? undefined,
   };
 
@@ -272,6 +276,7 @@ export function ActionsColumn<Obj extends Entity>(
   actionsFn: (record: Obj) => Action[]
 ): ColumnType<Obj> | undefined {
   return {
+    key: "actions",
     title,
     responsive: ["lg"],
     render: (_, record) => {
